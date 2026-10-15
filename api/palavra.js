@@ -71,11 +71,13 @@ module.exports = async function handler(req, res) {
   if (!categoria) return res.status(400).json({ erro: 'categoria obrigatória' });
 
   const prompt = montarPrompt(categoria, dificuldade, evitar);
+  const detalhes = [];
   for (const provedor of [viaGroq, viaGemini]) {
     try {
       const palavra = extrairPalavra(await provedor(prompt));
       if (palavra) return res.status(200).json({ palavra, via: provedor.name });
-    } catch (e) { /* tenta o próximo */ }
+      detalhes.push(provedor.name + ': resposta vazia');
+    } catch (e) { detalhes.push(provedor.name + ': ' + e.message); } // só códigos de status, nunca a chave
   }
-  return res.status(502).json({ erro: 'nenhuma IA respondeu' });
+  return res.status(502).json({ erro: 'nenhuma IA respondeu', detalhes });
 };

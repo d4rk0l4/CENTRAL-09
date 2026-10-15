@@ -1337,6 +1337,7 @@
           <option value="sem-mestre">Sem mestre</option>
         </select>
         <button class="btn-sortear" id="btnSortear">🎲 Sortear palavra</button>
+        <button class="btn-sortear" id="btnSortearIA" style="background:var(--amber-2);">✨ Sortear com IA</button>
       </div>
 
       <div class="controls" id="revelarLetraWrap" style="display:none; padding-top:0;">
@@ -1494,6 +1495,7 @@
           </select>
         </div>
         <button class="btn-gerar" id="btnSortearForca">🎲 Sortear palavra</button>
+        <button class="btn-gerar" id="btnSortearForcaIA" style="background:var(--amber-2);">✨ Com IA</button>
       </div>
 
       <div class="forca-board" id="forcaBoard" style="display:none;">
@@ -1813,6 +1815,7 @@
           </div>
         </div>
         <button class="btn-gerar btn-sortear-cidade" id="btnSortearImpostor">🎲 Sortear papéis</button>
+        <button class="btn-gerar btn-sortear-cidade" id="btnSortearImpostorIA" style="background:var(--amber-2); margin-top:8px;">✨ Sortear com IA</button>
       </div>
 
       <div class="reveal-area" id="impReveal" style="display:none;">
@@ -1937,6 +1940,7 @@
           </div>
         </div>
         <button class="btn-gerar btn-sortear-cidade" id="btnSortearNPF">🎲 Sortear rodada</button>
+        <button class="btn-gerar btn-sortear-cidade" id="btnSortearNPFIA" style="background:var(--amber-2); margin-top:8px;">✨ Sortear com IA</button>
       </div>
 
       <div class="reveal-area" id="npfReveal" style="display:none;">
@@ -2969,6 +2973,43 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
   });
 });
 
+/* ======================= IA: PALAVRAS (via /api/palavra) ======================= */
+window.IA_PALAVRA = {
+  async pedir(categoria, dificuldade, evitar){
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), 15000);
+    try{
+      const r = await fetch('/api/palavra', {
+        method: 'POST', headers: {'Content-Type': 'application/json'}, signal: ctrl.signal,
+        body: JSON.stringify({ categoria, dificuldade, evitar: (evitar || []).slice(-30) }),
+      });
+      const j = await r.json().catch(() => ({}));
+      if(!r.ok || !j.palavra) throw new Error((j.erro || ('HTTP ' + r.status)) + (j.detalhes ? ' [' + j.detalhes.join('; ') + ']' : ''));
+      return j.palavra;
+    } catch(e){
+      throw new Error(e.name === 'AbortError' ? 'tempo esgotado' : e.message);
+    } finally { clearTimeout(t); }
+  },
+  async comBotao(btn, fn){
+    const txt = btn.textContent;
+    btn.disabled = true; btn.textContent = '✨ Pensando...';
+    try{ await fn(); } finally { btn.disabled = false; btn.textContent = txt; }
+  },
+  toast(msg){
+    let el = document.getElementById('iaToast');
+    if(!el){
+      el = document.createElement('div'); el.id = 'iaToast';
+      el.style.cssText = 'position:fixed;left:12px;right:12px;bottom:16px;max-width:520px;margin:0 auto;background:#1b1f27;color:#f1ead8;border:1px solid #a5322c;padding:10px 14px;border-radius:4px;font:12px/1.5 "IBM Plex Mono",monospace;z-index:99998;cursor:pointer;';
+      el.addEventListener('click', () => el.remove());
+      document.body.appendChild(el);
+    }
+    el.textContent = '⚠️ ' + msg;
+    clearTimeout(el._t); el._t = setTimeout(() => el.remove(), 9000);
+  },
+  escolher(lista){ return lista[Math.floor(Math.random() * lista.length)]; },
+};
+const IA_TEMAS_PALAVRA = ['objeto do dia a dia', 'animal', 'comida ou bebida', 'profissão', 'lugar', 'ação ou verbo', 'esporte ou brincadeira', 'item de casa', 'meio de transporte', 'coisa da natureza'];
+
 /* ======================= JOGO: CONTATO ======================= */
 (function(){
   const BANCO = [
@@ -3065,6 +3106,7 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
     categoriaSelect: document.getElementById('categoriaSelect'),
     dificuldadeSelect: document.getElementById('dificuldadeSelectContato'),
     btnSortear: document.getElementById('btnSortear'),
+    btnSortearIA: document.getElementById('btnSortearIA'),
     historyList: document.getElementById('historyList'),
     modoSelect: document.getElementById('modoContato'),
     revelarLetraWrap: document.getElementById('revelarLetraWrap'),
@@ -3106,7 +3148,11 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
       return;
     }
 
-    palavraAtual = pool[Math.floor(Math.random() * pool.length)];
+    usarPalavra(pool[Math.floor(Math.random() * pool.length)]);
+  }
+
+  function usarPalavra(obj){
+    palavraAtual = obj;
     usadas.push(palavraAtual.p);
     rodada++;
     letrasReveladas = 1;
@@ -3116,6 +3162,20 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
     renderHistory();
     atualizarVisibilidadeModo();
   }
+
+  // funciona nos dois modos (com e sem mestre): o modo só muda como a palavra é exibida
+  el.btnSortearIA.addEventListener('click', () => IA_PALAVRA.comBotao(el.btnSortearIA, async () => {
+    const cat = el.categoriaSelect.value === 'todas' ? IA_PALAVRA.escolher(categorias) : el.categoriaSelect.value;
+    const dif = el.dificuldadeSelect.value === 'todas' ? 'media' : el.dificuldadeSelect.value;
+    try{
+      const p = await IA_PALAVRA.pedir(cat, dif, usadas);
+      usarPalavra({p, c: cat, d: dif});
+    } catch(e){
+      console.warn('IA indisponível:', e.message);
+      IA_PALAVRA.toast('IA indisponível (' + e.message + '). Usei a lista do painel.');
+      sortear();
+    }
+  }));
 
   function contarLetras(str){
     return str.split('').filter(ch => ch !== ' ' && ch !== '-').length;
@@ -3194,7 +3254,7 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
     });
   }
 
-  el.btnSortear.addEventListener('click', sortear);
+  el.btnSortear.addEventListener('click', () => sortear());
 })();
 
 /* ======================= JOGO: 12 DICAS ======================= */
@@ -4408,6 +4468,7 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
     categoriaSelect: document.getElementById('categoriaSelectForca'),
     dificuldadeSelect: document.getElementById('dificuldadeSelectForca'),
     btnSortear: document.getElementById('btnSortearForca'),
+    btnSortearIA: document.getElementById('btnSortearForcaIA'),
     forcaBoard: document.getElementById('forcaBoard'),
     forcaMetaCategoria: document.getElementById('forcaMetaCategoria'),
     forcaTentativas: document.getElementById('forcaTentativas'),
@@ -4457,7 +4518,11 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
       return;
     }
 
-    palavraAtual = pool[Math.floor(Math.random() * pool.length)];
+    usarPalavra(pool[Math.floor(Math.random() * pool.length)]);
+  }
+
+  function usarPalavra(obj){
+    palavraAtual = obj;
     usadas.push(palavraAtual.p);
 
     acertadas = new Set();
@@ -4475,6 +4540,20 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
     renderHistory();
     atualizarTentativas();
   }
+
+  el.btnSortearIA.addEventListener('click', () => IA_PALAVRA.comBotao(el.btnSortearIA, async () => {
+    const cat = el.categoriaSelect.value === 'todas' ? IA_PALAVRA.escolher(categorias) : el.categoriaSelect.value;
+    const dif = el.dificuldadeSelect.value === 'todas' ? 'media' : el.dificuldadeSelect.value;
+    try{
+      const p = await IA_PALAVRA.pedir(cat + ' (uma única palavra, sem espaço nem hífen)', dif, usadas);
+      if(!/^[A-Za-zÀ-ÿ]+$/.test(p)) throw new Error('a IA devolveu "' + p + '", que não serve pra forca');
+      usarPalavra({p, c: cat, d: dif});
+    } catch(e){
+      console.warn('IA indisponível:', e.message);
+      IA_PALAVRA.toast('IA indisponível (' + e.message + '). Usei a lista do painel.');
+      sortear();
+    }
+  }));
 
   function renderTeclado(){
     el.letterGrid.innerHTML = '';
@@ -4564,7 +4643,7 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
     });
   }
 
-  el.btnSortear.addEventListener('click', sortear);
+  el.btnSortear.addEventListener('click', () => sortear());
 })();
 
 /* ======================= JOGO: 2 VERDADES E 1 MENTIRA ======================= */
@@ -5501,6 +5580,7 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
     tipo: document.getElementById('impTipo'),
     numJogadores: document.getElementById('impNumJogadores'),
     btnSortear: document.getElementById('btnSortearImpostor'),
+    btnSortearIA: document.getElementById('btnSortearImpostorIA'),
     impConfig: document.getElementById('impConfig'),
     impReveal: document.getElementById('impReveal'),
     revealProgress: document.getElementById('impRevealProgress'),
@@ -5518,12 +5598,13 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
   let escolhido = '';
   let indiceAtual = 0;
 
-  function sortear(){
+  let usadasIA = [];
+  function sortear(externo){
     const tipo = el.tipo.value;
     const n = parseInt(el.numJogadores.value, 10);
     const banco = tipo === 'palavra' ? PALAVRAS : LUGARES;
 
-    escolhido = banco[Math.floor(Math.random() * banco.length)];
+    escolhido = (typeof externo === 'string' && externo) ? externo : banco[Math.floor(Math.random() * banco.length)];
     const impostorIndex = Math.floor(Math.random() * n);
     jogadores = Array.from({length: n}, (_, i) => i === impostorIndex ? 'impostor' : 'normal');
     indiceAtual = 0;
@@ -5587,7 +5668,19 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
   el.holdZone.addEventListener('touchstart', startHold, {passive:false});
   el.holdZone.addEventListener('touchend', endHold);
 
-  el.btnSortear.addEventListener('click', sortear);
+  el.btnSortear.addEventListener('click', () => sortear());
+  el.btnSortearIA.addEventListener('click', () => IA_PALAVRA.comBotao(el.btnSortearIA, async () => {
+    const tema = el.tipo.value === 'lugar' ? 'lugar conhecido (cidade, estabelecimento ou local público)' : IA_PALAVRA.escolher(IA_TEMAS_PALAVRA);
+    try{
+      const p = await IA_PALAVRA.pedir(tema, 'facil', usadasIA);
+      usadasIA.push(p);
+      sortear(p);
+    } catch(e){
+      console.warn('IA indisponível:', e.message);
+      IA_PALAVRA.toast('IA indisponível (' + e.message + '). Usei a lista do painel.');
+      sortear();
+    }
+  }));
   el.btnProximo.addEventListener('click', proximoJogador);
   el.btnRecomecar.addEventListener('click', reiniciar);
 })();
@@ -5736,6 +5829,7 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
   const el = {
     numJogadores: document.getElementById('npfNumJogadores'),
     btnSortear: document.getElementById('btnSortearNPF'),
+    btnSortearIA: document.getElementById('btnSortearNPFIA'),
     npfConfig: document.getElementById('npfConfig'),
     npfReveal: document.getElementById('npfReveal'),
     assuntoText: document.getElementById('npfAssuntoText'),
@@ -5754,13 +5848,15 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
   let assunto = '';
   let indiceAtual = 0;
 
-  function sortear(){
+  let usadasIA = [];
+  function sortear(externas){
     const n = parseInt(el.numJogadores.value, 10);
 
     assunto = ASSUNTOS[Math.floor(Math.random() * ASSUNTOS.length)];
 
-    const copia = PALAVRAS.slice();
-    const escolhidas = [];
+    const prontas = Array.isArray(externas) ? externas.slice(0, n) : [];
+    const copia = PALAVRAS.filter(p => !prontas.includes(p));
+    const escolhidas = prontas;
     while(escolhidas.length < n && copia.length > 0){
       const idx = Math.floor(Math.random() * copia.length);
       escolhidas.push(copia[idx]);
@@ -5822,7 +5918,18 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
   el.holdZone.addEventListener('touchstart', startHold, {passive:false});
   el.holdZone.addEventListener('touchend', endHold);
 
-  el.btnSortear.addEventListener('click', sortear);
+  el.btnSortear.addEventListener('click', () => sortear());
+  el.btnSortearIA.addEventListener('click', () => IA_PALAVRA.comBotao(el.btnSortearIA, async () => {
+    const n = parseInt(el.numJogadores.value, 10);
+    const temas = IA_TEMAS_PALAVRA.slice().sort(() => Math.random() - 0.5);
+    const pedidos = Array.from({length: n}, (_, i) => IA_PALAVRA.pedir(temas[i % temas.length], 'facil', usadasIA).catch(e => e));
+    const respostas = await Promise.all(pedidos);
+    const boas = [...new Set(respostas.filter(r => typeof r === 'string'))];
+    const erro = respostas.find(r => r instanceof Error);
+    if(erro) IA_PALAVRA.toast('IA falhou em ' + (n - boas.length) + ' palavra(s) (' + erro.message + '). Completei com a lista do painel.');
+    usadasIA.push(...boas);
+    sortear(boas);
+  }));
   el.btnProximo.addEventListener('click', proximoJogador);
   el.btnRecomecar.addEventListener('click', reiniciar);
 })();
