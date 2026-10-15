@@ -14,45 +14,70 @@ ${evitar.length ? 'NÃO use nenhuma destas: ' + evitar.join(', ') + '.' : ''}
 Responda apenas em JSON no formato {"palavra":"..."}.`;
 }
 
+const MODELOS_GROQ = ['llama-3.3-70b-versatile', 'openai/gpt-oss-20b', 'llama-3.1-8b-instant'];
+const MODELOS_GEMINI = ['gemini-3.5-flash-lite', 'gemini-3.1-flash-lite', 'gemini-3.6-flash'];
+
+async function msgErro(r) {
+  let t = '';
+  try { const j = await r.json(); t = (j.error && (j.error.message || j.error)) || ''; } catch (e) { /* sem corpo */ }
+  return r.status + (t ? ' ' + String(t).slice(0, 140) : '');
+}
+
+// tenta cada modelo da lista (o env var, se existir, vai primeiro); devolve o texto ou lança com os motivos
+async function tentarModelos(modelos, chamar) {
+  const erros = [];
+  for (const m of modelos) {
+    try { return await chamar(m); } catch (e) { erros.push(m + ': ' + e.message); }
+  }
+  throw new Error(erros.join(' | '));
+}
+
 async function viaGroq(prompt) {
   const key = process.env.GROQ_API_KEY;
   if (!key) throw new Error('sem GROQ_API_KEY');
-  const r = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + key },
-    body: JSON.stringify({
-      model: process.env.GROQ_MODEL || 'llama-3.3-70b-versatile',
-      messages: [{ role: 'user', content: prompt }],
-      temperature: 1.1, max_tokens: 40,
-      response_format: { type: 'json_object' },
-    }),
+  const lista = [process.env.GROQ_MODEL, ...MODELOS_GROQ].filter(Boolean);
+  return tentarModelos(lista, async (modelo) => {
+    const r = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + key },
+      body: JSON.stringify({
+        model: modelo,
+        messages: [{ role: 'user', content: prompt }],
+        temperature: 1.0, max_tokens: 300,
+      }),
+    });
+    if (!r.ok) throw new Error(await msgErro(r));
+    const j = await r.json();
+    return j.choices[0].message.content;
   });
-  if (!r.ok) throw new Error('groq ' + r.status);
-  const j = await r.json();
-  return j.choices[0].message.content;
 }
 
 async function viaGemini(prompt) {
   const key = process.env.GEMINI_API_KEY;
   if (!key) throw new Error('sem GEMINI_API_KEY');
-  const modelo = process.env.GEMINI_MODEL || 'gemini-2.0-flash';
-  const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${modelo}:generateContent`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key },
-    body: JSON.stringify({
-      contents: [{ parts: [{ text: prompt }] }],
-      generationConfig: { temperature: 1.1, maxOutputTokens: 40, responseMimeType: 'application/json' },
-    }),
+  const lista = [process.env.GEMINI_MODEL, ...MODELOS_GEMINI].filter(Boolean);
+  return tentarModelos(lista, async (modelo) => {
+    const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${modelo}:generateContent`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key },
+      body: JSON.stringify({
+        contents: [{ parts: [{ text: prompt }] }],
+        generationConfig: { temperature: 1.0, maxOutputTokens: 300 },
+      }),
+    });
+    if (!r.ok) throw new Error(await msgErro(r));
+    const j = await r.json();
+    return j.candidates[0].content.parts.map(p => p.text || '').join('');
   });
-  if (!r.ok) throw new Error('gemini ' + r.status);
-  const j = await r.json();
-  return j.candidates[0].content.parts[0].text;
 }
 
 function extrairPalavra(texto) {
+  texto = String(texto || '');
   let p;
-  try { p = JSON.parse(texto).palavra; } catch { p = texto; }
-  p = String(p || '').replace(/["“”.]/g, '').trim();
+  const m = texto.match(/\{[\s\S]*?\}/);
+  if (m) { try { p = JSON.parse(m[0]).palavra; } catch (e) { /* cai no texto puro */ } }
+  if (!p) p = texto.split('\n')[0];
+  p = String(p || '').replace(/["“”.*]/g, '').trim();
   return p && p.length <= 40 ? p : null;
 }
 
